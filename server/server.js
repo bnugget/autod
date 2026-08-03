@@ -35,6 +35,10 @@ const ENV = {
   DRIVE_CLIENT_ID: process.env.DRIVE_CLIENT_ID,
   DRIVE_CLIENT_SECRET: process.env.DRIVE_CLIENT_SECRET,
   DRIVE_REFRESH_TOKEN: process.env.DRIVE_REFRESH_TOKEN,
+  SPOTIFY_CLIENT_ID: process.env.SPOTIFY_CLIENT_ID,
+  SPOTIFY_CLIENT_SECRET: process.env.SPOTIFY_CLIENT_SECRET,
+  SPOTIFY_REFRESH_TOKEN: process.env.SPOTIFY_REFRESH_TOKEN,
+  SPOTIFY_PLAYLIST_ID: process.env.SPOTIFY_PLAYLIST_ID,
 };
 
 const state = {
@@ -351,6 +355,96 @@ app.get("/api/files", async (req, res) => {
       pageSize: 200,
     });
     res.json({ files: result.data.files || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function getSheetsClient() {
+  if (!ENV.DRIVE_CLIENT_ID || !ENV.DRIVE_REFRESH_TOKEN) return null;
+  const oauth2Client = new google.auth.OAuth2(ENV.DRIVE_CLIENT_ID, ENV.DRIVE_CLIENT_SECRET);
+  oauth2Client.setCredentials({ refresh_token: ENV.DRIVE_REFRESH_TOKEN });
+  return google.sheets({ version: "v4", auth: oauth2Client });
+}
+
+async function getSheetTabName(sheets) {
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: ENV.GOOGLE_SHEET_ID });
+  const gidNum = Number(ENV.GOOGLE_SHEET_GID || 0);
+  const sheet = meta.data.sheets.find((s) => s.properties.sheetId === gidNum);
+  if (!sheet) throw new Error(`could not find a sheet tab with gid ${gidNum}`);
+  return sheet.properties.title;
+}
+
+async function getSpotifyAccessToken() {
+  const res = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: "Basic " + Buffer.from(`${ENV.SPOTIFY_CLIENT_ID}:${ENV.SPOTIFY_CLIENT_SECRET}`).toString("base64"),
+    },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: ENV.SPOTIFY_REFRESH_TOKEN,
+    }),
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error(`spotify auth failed: ${data.error_description || data.error || "unknown error"}`);
+  return data.access_token;
+}
+
+async function fetchSpotifyPlaylistUrls(accessToken) {
+  const urls = [];
+  let url = `https://api.spotify.com/v1/playlists/${ENV.SPOTIFY_PLAYLIST_ID}/tracks?limit=100`;
+  while (url) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!res.ok) throw new Error(`spotify api failed (status ${res.status})`);
+    const data = await res.json();
+    for (const item of data.items || []) {
+      const track = item.track;
+      if (track && track.external_urls && track.external_urls.spotify) {
+        urls.push(track.external_urls.spotify);
+      }
+    }
+    url = data.next;
+  }
+  return urls;
+}
+
+async function importSpotifyPlaylist() {
+  if (!ENV.SPOTIFY_CLIENT_ID || !ENV.SPOTIFY_REFRESH_TOKEN || !ENV.SPOTIFY_PLAYLIST_ID) {
+    throw new Error("spotify is not fully configured");
+  }
+
+  const accessToken = await getSpotifyAccessToken();
+  const playlistUrls = await fetchSpotifyPlaylistUrls(accessToken);
+
+  const existingUrls = await fetchUrlsFromSheet();
+  const existingSet = new Set(existingUrls);
+  const newUrls = playlistUrls.filter((u) => !existingSet.has(u));
+
+  if (newUrls.length === 0) {
+    return { added: 0, total: playlistUrls.length };
+  }
+
+  const sheets = getSheetsClient();
+  if (!sheets) throw new Error("drive/sheets not configured");
+
+  const tabName = await getSheetTabName(sheets);
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: ENV.GOOGLE_SHEET_ID,
+    range: `'${tabName}'!A:A`,
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values: newUrls.map((u) => [u]) },
+  });
+
+  return { added: newUrls.length, total: playlistUrls.length };
+}
+
+app.post("/api/spotify-import", async (req, res) => {
+  try {
+    const result = await importSpotifyPlaylist();
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
