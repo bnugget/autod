@@ -24,13 +24,22 @@ button{font-family:Tahoma,Geneva,sans-serif}
   <div style="background:#c0c0c0;padding:4px 6px;display:flex;gap:4px;border-bottom:1px solid #808080">
     <button id="sourceBtn" class="win98-raised win98-label" style="padding:2px 6px;cursor:pointer">SOURCE</button>
     <button id="browseBtn" class="win98-raised win98-label" style="padding:2px 6px;cursor:pointer">BROWSE</button>
-    <div class="win98-raised win98-label" style="padding:2px 6px" aria-hidden="true">PLAYLIST</div>
+    <button id="previewBtn" class="win98-raised win98-label" style="padding:2px 6px;cursor:pointer">PREVIEW</button>
     <div class="win98-raised win98-label" style="padding:2px 6px" aria-hidden="true">SEARCH</div>
     <div class="win98-raised win98-label" style="padding:2px 6px" aria-hidden="true">MENU</div>
   </div>
   <div style="background:#c0c0c0;padding:10px">
-    <div class="win98-inset" style="background:#000;color:#00ff00;font-family:'Courier New',monospace;font-size:11px;padding:8px;height:120px;overflow-y:auto" id="logBox">C:\AUTOD&gt; ready, click SYNC to start</div>
-    <canvas id="visualizer" class="win98-inset" width="420" height="136" style="background:#000;display:none;width:100%;height:136px;box-sizing:border-box"></canvas>
+    <div class="win98-inset" style="background:#000;color:#00ff00;font-family:'Courier New',monospace;font-size:11px;padding:8px;height:170px;overflow-y:auto" id="logBox">C:\AUTOD&gt; ready, click SYNC to start</div>
+    <div id="visualizerScreen" class="win98-inset" style="background:#000;display:none;height:170px;box-sizing:border-box;padding:6px">
+      <div style="color:#00ff00;font-family:'Courier New',monospace;font-size:11px;display:flex;justify-content:space-between">
+        <span id="trackName">(no track loaded)</span>
+        <span id="trackTime">0:00 / 0:00</span>
+      </div>
+      <canvas id="visualizer" width="420" height="130" style="display:block;width:100%;height:130px;margin-top:2px"></canvas>
+      <div id="seekBar" style="height:10px;background:#111;margin-top:4px;position:relative;cursor:pointer">
+        <div id="seekFill" style="position:absolute;left:0;top:0;height:100%;background:#00ff00;width:0%"></div>
+      </div>
+    </div>
     <div class="win98-inset win98-label" style="background:#c0c0c0;padding:3px 6px;margin-top:4px" id="statusBar">Ready</div>
   </div>
   <div style="background:#c0c0c0;padding:0 10px 8px;display:flex;gap:4px;justify-content:center" aria-hidden="true">
@@ -44,7 +53,11 @@ button{font-family:Tahoma,Geneva,sans-serif}
     <div class="win98-raised win98-label" style="width:40px;height:36px;text-align:center;line-height:36px;font-weight:bold;background:#d1c93a">H</div>
   </div>
   <div style="background:#c0c0c0;padding:6px 16px 18px;display:flex;justify-content:space-between;align-items:center">
-    <div style="display:flex;flex-direction:column;gap:10px;align-items:center">
+    <div style="display:flex;flex-direction:column;gap:8px;align-items:center">
+      <div style="display:flex;gap:4px">
+        <button id="seekBackBtn" class="win98-raised win98-label" style="width:24px;height:20px;font-size:9px;cursor:pointer" title="Skip back 10s">&#9664;&#9664;</button>
+        <button id="seekFwdBtn" class="win98-raised win98-label" style="width:24px;height:20px;font-size:9px;cursor:pointer" title="Skip forward 10s">&#9654;&#9654;</button>
+      </div>
       <div class="win98-raised win98-label" style="width:52px;height:52px;border-radius:50%;text-align:center;line-height:52px;font-weight:bold;color:#a05a00" aria-hidden="true">CUE</div>
       <button id="playBtn" class="win98-raised win98-label" style="width:52px;height:52px;border-radius:50%;font-weight:bold;color:#1a7a1a;cursor:pointer">PLAY</button>
     </div>
@@ -70,18 +83,26 @@ button{font-family:Tahoma,Geneva,sans-serif}
 var BACKEND_URL = "https://autod-d25s.onrender.com";
 
 var logBox = document.getElementById("logBox");
+var visualizerScreen = document.getElementById("visualizerScreen");
 var canvas = document.getElementById("visualizer");
 var canvasCtx = canvas.getContext("2d");
+var trackNameEl = document.getElementById("trackName");
+var trackTimeEl = document.getElementById("trackTime");
+var seekBar = document.getElementById("seekBar");
+var seekFill = document.getElementById("seekFill");
 var statusBar = document.getElementById("statusBar");
+
 var syncBtn = document.getElementById("syncBtn");
 var browseBtn = document.getElementById("browseBtn");
 var sourceBtn = document.getElementById("sourceBtn");
+var previewBtn = document.getElementById("previewBtn");
 var playBtn = document.getElementById("playBtn");
+var seekBackBtn = document.getElementById("seekBackBtn");
+var seekFwdBtn = document.getElementById("seekFwdBtn");
 var downloadBtn = document.getElementById("downloadBtn");
 
 var pollTimer = null;
 var viewMode = "log";
-var previousMode = "log";
 var lastState = null;
 var currentFiles = [];
 var selectedIndices = new Set();
@@ -98,15 +119,19 @@ function formatSize(bytes) {
   return (Number(bytes) / (1024 * 1024)).toFixed(1) + " MB";
 }
 
+function formatTime(sec) {
+  if (!isFinite(sec) || sec < 0) sec = 0;
+  var m = Math.floor(sec / 60);
+  var s = Math.floor(sec % 60);
+  return m + ":" + (s < 10 ? "0" : "") + s;
+}
+
 function showScreen(mode) {
   viewMode = mode;
-  if (mode === "visualizer") {
-    logBox.style.display = "none";
-    canvas.style.display = "block";
-  } else {
-    canvas.style.display = "none";
-    logBox.style.display = "block";
-  }
+  logBox.style.display = mode === "log" || mode === "browse" ? "block" : "none";
+  visualizerScreen.style.display = mode === "visualizer" ? "block" : "none";
+  if (mode === "visualizer") startVisualizerLoopIfNeeded();
+  else stopVisualizer();
 }
 
 function renderLog(state) {
@@ -129,11 +154,8 @@ function renderFiles(files) {
     var date = f.modifiedTime ? f.modifiedTime.slice(0, 10) : "";
     var check = '<input type="checkbox" class="fileCheck" data-idx="' + idx + '"' +
       (selectedIndices.has(idx) ? " checked" : "") + ' style="accent-color:#00ff00;margin-right:4px">';
-    var play = '<a href="#" data-idx="' + idx + '" class="playLink" style="color:#ffcc00;text-decoration:none">&#9654;</a>';
-    var name = f.webContentLink
-      ? '<a href="' + f.webContentLink + '" target="_blank" style="color:#00ff00">' + f.name + "</a>"
-      : f.name;
-    return check + play + "&nbsp;" + name + "&nbsp;&nbsp;" + size + "&nbsp;&nbsp;" + date;
+    var name = '<a href="#" data-idx="' + idx + '" class="playLink" style="color:#00ff00;text-decoration:underline;cursor:pointer">' + f.name + "</a>";
+    return check + name + "&nbsp;&nbsp;" + size + "&nbsp;&nbsp;" + date;
   });
   logBox.innerHTML = "C:\\DRIVE&gt; dir<br><br>" + lines.join("<br>") + "<br><br>" + files.length + " file(s)";
 
@@ -152,19 +174,18 @@ function renderFiles(files) {
   });
 }
 
-function backToPreviousScreen() {
-  showScreen(previousMode);
-  if (previousMode === "browse") {
-    renderFiles(currentFiles);
-  } else {
-    renderLog(lastState);
-  }
-}
-
 function loadTrack(file) {
   nowPlaying = file.name;
+  trackNameEl.textContent = nowPlaying;
   audio.src = BACKEND_URL + "/api/stream/" + file.id;
   audio.play();
+}
+
+function updateProgressUI() {
+  var duration = audio.duration || 0;
+  var current = audio.currentTime || 0;
+  trackTimeEl.textContent = formatTime(current) + " / " + formatTime(duration);
+  seekFill.style.width = (duration ? (current / duration) * 100 : 0) + "%";
 }
 
 function setupAnalyser() {
@@ -177,21 +198,65 @@ function setupAnalyser() {
   analyser.connect(audioCtx.destination);
 }
 
+function startVisualizerLoopIfNeeded() {
+  if (viewMode === "visualizer" && !audio.paused && analyser && !animId) drawVisualizer();
+}
+
 function drawVisualizer() {
-  var bufferLength = analyser.frequencyBinCount;
-  var dataArray = new Uint8Array(bufferLength);
+  var freqData = new Uint8Array(analyser.frequencyBinCount);
+  var timeData = new Uint8Array(analyser.fftSize);
+  var rayCount = 56;
 
   function draw() {
     animId = requestAnimationFrame(draw);
-    analyser.getByteFrequencyData(dataArray);
+    analyser.getByteFrequencyData(freqData);
+    analyser.getByteTimeDomainData(timeData);
+
+    var w = canvas.width, h = canvas.height, cx = w / 2, cy = h / 2;
+    var now = performance.now();
+
     canvasCtx.fillStyle = "#000";
-    canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
-    var barWidth = canvas.width / bufferLength;
-    for (var i = 0; i < bufferLength; i++) {
-      var barHeight = (dataArray[i] / 255) * canvas.height;
-      canvasCtx.fillStyle = "#00ff00";
-      canvasCtx.fillRect(i * barWidth, canvas.height - barHeight, barWidth - 1, barHeight);
+    canvasCtx.fillRect(0, 0, w, h);
+
+    canvasCtx.save();
+    canvasCtx.shadowBlur = 5;
+    canvasCtx.shadowColor = "#00ff77";
+    for (var i = 0; i < rayCount; i++) {
+      var angle = (i / rayCount) * Math.PI * 2;
+      var mag = freqData[i % freqData.length] / 255;
+      var length = mag * Math.max(w, h) * 0.95 + 6;
+      var segments = 5;
+      canvasCtx.beginPath();
+      canvasCtx.moveTo(cx, cy);
+      for (var s = 1; s <= segments; s++) {
+        var t = s / segments;
+        var dist = length * t;
+        var wobble = Math.sin(t * 6 + i * 0.7 + now / 250) * 3 * mag;
+        var px = cx + Math.cos(angle) * dist + Math.cos(angle + Math.PI / 2) * wobble;
+        var py = cy + Math.sin(angle) * dist * (h / w) + Math.sin(angle + Math.PI / 2) * wobble * (h / w);
+        canvasCtx.lineTo(px, py);
+      }
+      canvasCtx.strokeStyle = "rgba(60,255,140," + (0.1 + mag * 0.6) + ")";
+      canvasCtx.lineWidth = 1;
+      canvasCtx.stroke();
     }
+    canvasCtx.restore();
+
+    canvasCtx.save();
+    canvasCtx.shadowBlur = 6;
+    canvasCtx.shadowColor = "#00ff99";
+    canvasCtx.strokeStyle = "#a8ffcc";
+    canvasCtx.lineWidth = 1.5;
+    canvasCtx.beginPath();
+    var sliceWidth = w / timeData.length;
+    for (var j = 0; j < timeData.length; j++) {
+      var v = (timeData[j] - 128) / 128;
+      var y = cy + v * (h * 0.38);
+      var x = j * sliceWidth;
+      if (j === 0) canvasCtx.moveTo(x, y); else canvasCtx.lineTo(x, y);
+    }
+    canvasCtx.stroke();
+    canvasCtx.restore();
   }
   draw();
 }
@@ -243,30 +308,39 @@ function poll() {
 }
 
 audio.addEventListener("play", function () {
-  if (viewMode !== "visualizer") previousMode = viewMode;
   setupAnalyser();
   if (audioCtx.state === "suspended") audioCtx.resume();
-  showScreen("visualizer");
-  drawVisualizer();
+  startVisualizerLoopIfNeeded();
   applyStatusBar(lastState);
 });
 
 audio.addEventListener("pause", function () {
   stopVisualizer();
-  backToPreviousScreen();
   applyStatusBar(lastState);
 });
 
-audio.addEventListener("ended", function () {
-  nowPlaying = null;
-  stopVisualizer();
-  backToPreviousScreen();
-  applyStatusBar(lastState);
-});
+audio.addEventListener("timeupdate", updateProgressUI);
+audio.addEventListener("loadedmetadata", updateProgressUI);
 
 playBtn.addEventListener("click", function () {
   if (!audio.src) return;
   if (audio.paused) audio.play(); else audio.pause();
+});
+
+seekBackBtn.addEventListener("click", function () {
+  if (!audio.src) return;
+  audio.currentTime = Math.max(0, (audio.currentTime || 0) - 10);
+});
+
+seekFwdBtn.addEventListener("click", function () {
+  if (!audio.src) return;
+  audio.currentTime = Math.min(audio.duration || audio.currentTime, (audio.currentTime || 0) + 10);
+});
+
+seekBar.addEventListener("click", function (e) {
+  if (!audio.duration) return;
+  var rect = seekBar.getBoundingClientRect();
+  audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
 });
 
 syncBtn.addEventListener("click", function () {
@@ -306,6 +380,11 @@ browseBtn.addEventListener("click", function () {
 sourceBtn.addEventListener("click", function () {
   showScreen("log");
   renderLog(lastState);
+});
+
+previewBtn.addEventListener("click", function () {
+  showScreen("visualizer");
+  updateProgressUI();
 });
 
 downloadBtn.addEventListener("click", function () {
