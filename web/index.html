@@ -30,6 +30,7 @@ button{font-family:Tahoma,Geneva,sans-serif}
   </div>
   <div style="background:#c0c0c0;padding:10px">
     <div class="win98-inset" style="background:#000;color:#00ff00;font-family:'Courier New',monospace;font-size:11px;padding:8px;height:120px;overflow-y:auto" id="logBox">C:\AUTOD&gt; ready, click SYNC to start</div>
+    <canvas id="visualizer" class="win98-inset" width="420" height="136" style="background:#000;display:none;width:100%;height:136px;box-sizing:border-box"></canvas>
     <div class="win98-inset win98-label" style="background:#c0c0c0;padding:3px 6px;margin-top:4px" id="statusBar">Ready</div>
   </div>
   <div style="background:#c0c0c0;padding:0 10px 8px;display:flex;gap:4px;justify-content:center" aria-hidden="true">
@@ -52,13 +53,13 @@ button{font-family:Tahoma,Geneva,sans-serif}
       <div style="position:absolute;width:118px;height:118px;border-radius:50%;border:2px solid #555;pointer-events:none"></div>
       <button id="syncBtn" class="win98-raised" style="width:80px;height:80px;border-radius:50%;font-weight:bold;font-size:15px;color:#000;letter-spacing:1px;cursor:pointer">SYNC</button>
     </div>
-    <div style="display:flex;flex-direction:column;gap:4px;align-items:center" aria-hidden="true">
-      <div style="display:flex;gap:4px">
+    <div style="display:flex;flex-direction:column;gap:4px;align-items:center">
+      <div style="display:flex;gap:4px" aria-hidden="true">
         <div class="win98-raised win98-label" style="width:34px;height:28px;text-align:center;line-height:28px;font-size:10px">IN</div>
         <div class="win98-raised win98-label" style="width:34px;height:28px;text-align:center;line-height:28px;font-size:10px">OUT</div>
       </div>
-      <div class="win98-raised win98-label" style="width:72px;height:24px;text-align:center;line-height:24px;font-size:10px">RELOOP</div>
-      <div style="display:flex;gap:4px">
+      <button id="downloadBtn" class="win98-raised win98-label" style="width:72px;height:24px;font-size:10px;cursor:pointer">DOWNLOAD</button>
+      <div style="display:flex;gap:4px" aria-hidden="true">
         <div class="win98-raised win98-label" style="width:34px;height:28px;text-align:center;line-height:28px;font-size:10px">4</div>
         <div class="win98-raised win98-label" style="width:34px;height:28px;text-align:center;line-height:28px;font-size:10px">8</div>
       </div>
@@ -69,27 +70,51 @@ button{font-family:Tahoma,Geneva,sans-serif}
 var BACKEND_URL = "https://autod-d25s.onrender.com";
 
 var logBox = document.getElementById("logBox");
+var canvas = document.getElementById("visualizer");
+var canvasCtx = canvas.getContext("2d");
 var statusBar = document.getElementById("statusBar");
 var syncBtn = document.getElementById("syncBtn");
 var browseBtn = document.getElementById("browseBtn");
 var sourceBtn = document.getElementById("sourceBtn");
 var playBtn = document.getElementById("playBtn");
+var downloadBtn = document.getElementById("downloadBtn");
+
 var pollTimer = null;
 var viewMode = "log";
+var previousMode = "log";
 var lastState = null;
 var currentFiles = [];
+var selectedIndices = new Set();
 var nowPlaying = null;
+
 var audio = new Audio();
+audio.crossOrigin = "anonymous";
+var audioCtx = null;
+var analyser = null;
+var animId = null;
 
 function formatSize(bytes) {
   if (!bytes) return "";
   return (Number(bytes) / (1024 * 1024)).toFixed(1) + " MB";
 }
 
+function showScreen(mode) {
+  viewMode = mode;
+  if (mode === "visualizer") {
+    logBox.style.display = "none";
+    canvas.style.display = "block";
+  } else {
+    canvas.style.display = "none";
+    logBox.style.display = "block";
+  }
+}
+
 function renderLog(state) {
-  if (state.log && state.log.length) {
+  if (state && state.log && state.log.length) {
     logBox.innerHTML = state.log.map(function (entry) { return entry.text; }).join("<br>");
     logBox.scrollTop = logBox.scrollHeight;
+  } else {
+    logBox.innerHTML = "C:\\AUTOD&gt; ready, click SYNC to start";
   }
 }
 
@@ -102,21 +127,38 @@ function renderFiles(files) {
   var lines = files.map(function (f, idx) {
     var size = formatSize(f.size);
     var date = f.modifiedTime ? f.modifiedTime.slice(0, 10) : "";
+    var check = '<input type="checkbox" class="fileCheck" data-idx="' + idx + '"' +
+      (selectedIndices.has(idx) ? " checked" : "") + ' style="accent-color:#00ff00;margin-right:4px">';
     var play = '<a href="#" data-idx="' + idx + '" class="playLink" style="color:#ffcc00;text-decoration:none">&#9654;</a>';
     var name = f.webContentLink
       ? '<a href="' + f.webContentLink + '" target="_blank" style="color:#00ff00">' + f.name + "</a>"
       : f.name;
-    return play + "&nbsp;" + name + "&nbsp;&nbsp;" + size + "&nbsp;&nbsp;" + date;
+    return check + play + "&nbsp;" + name + "&nbsp;&nbsp;" + size + "&nbsp;&nbsp;" + date;
   });
   logBox.innerHTML = "C:\\DRIVE&gt; dir<br><br>" + lines.join("<br>") + "<br><br>" + files.length + " file(s)";
 
-  var links = logBox.querySelectorAll(".playLink");
-  links.forEach(function (link) {
+  logBox.querySelectorAll(".playLink").forEach(function (link) {
     link.addEventListener("click", function (e) {
       e.preventDefault();
       loadTrack(currentFiles[Number(link.getAttribute("data-idx"))]);
     });
   });
+
+  logBox.querySelectorAll(".fileCheck").forEach(function (check) {
+    check.addEventListener("change", function () {
+      var idx = Number(check.getAttribute("data-idx"));
+      if (check.checked) selectedIndices.add(idx); else selectedIndices.delete(idx);
+    });
+  });
+}
+
+function backToPreviousScreen() {
+  showScreen(previousMode);
+  if (previousMode === "browse") {
+    renderFiles(currentFiles);
+  } else {
+    renderLog(lastState);
+  }
 }
 
 function loadTrack(file) {
@@ -125,8 +167,42 @@ function loadTrack(file) {
   audio.play();
 }
 
+function setupAnalyser() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  var sourceNode = audioCtx.createMediaElementSource(audio);
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 64;
+  sourceNode.connect(analyser);
+  analyser.connect(audioCtx.destination);
+}
+
+function drawVisualizer() {
+  var bufferLength = analyser.frequencyBinCount;
+  var dataArray = new Uint8Array(bufferLength);
+
+  function draw() {
+    animId = requestAnimationFrame(draw);
+    analyser.getByteFrequencyData(dataArray);
+    canvasCtx.fillStyle = "#000";
+    canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+    var barWidth = canvas.width / bufferLength;
+    for (var i = 0; i < bufferLength; i++) {
+      var barHeight = (dataArray[i] / 255) * canvas.height;
+      canvasCtx.fillStyle = "#00ff00";
+      canvasCtx.fillRect(i * barWidth, canvas.height - barHeight, barWidth - 1, barHeight);
+    }
+  }
+  draw();
+}
+
+function stopVisualizer() {
+  if (animId) cancelAnimationFrame(animId);
+  animId = null;
+}
+
 function applyStatusBar(state) {
-  if (state.running) {
+  if (state && state.running) {
     if (state.progress) {
       statusBar.textContent = "Batch " + state.progress.batch + "/" + state.progress.totalBatches +
         " - " + state.progress.processed + "/" + state.progress.batchSize + " processed";
@@ -139,9 +215,9 @@ function applyStatusBar(state) {
     statusBar.textContent = (audio.paused ? "Paused: " : "Now playing: ") + nowPlaying;
     return;
   }
-  if (state.summary && state.summary.error) {
+  if (state && state.summary && state.summary.error) {
     statusBar.textContent = "Last run failed: " + state.summary.error;
-  } else if (state.summary) {
+  } else if (state && state.summary) {
     statusBar.textContent = "Last run: " + state.summary.downloaded + " of " + state.summary.sent +
       " downloaded, " + state.summary.uploaded + " of " + state.summary.sent + " uploaded";
   } else {
@@ -159,18 +235,6 @@ function renderState(state) {
   }
 }
 
-audio.addEventListener("play", function () { if (lastState) applyStatusBar(lastState); });
-audio.addEventListener("pause", function () { if (lastState) applyStatusBar(lastState); });
-audio.addEventListener("ended", function () {
-  nowPlaying = null;
-  if (lastState) applyStatusBar(lastState);
-});
-
-playBtn.addEventListener("click", function () {
-  if (!audio.src) return;
-  if (audio.paused) audio.play(); else audio.pause();
-});
-
 function poll() {
   fetch(BACKEND_URL + "/api/status")
     .then(function (res) { return res.json(); })
@@ -178,9 +242,36 @@ function poll() {
     .catch(function () {});
 }
 
+audio.addEventListener("play", function () {
+  if (viewMode !== "visualizer") previousMode = viewMode;
+  setupAnalyser();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  showScreen("visualizer");
+  drawVisualizer();
+  applyStatusBar(lastState);
+});
+
+audio.addEventListener("pause", function () {
+  stopVisualizer();
+  backToPreviousScreen();
+  applyStatusBar(lastState);
+});
+
+audio.addEventListener("ended", function () {
+  nowPlaying = null;
+  stopVisualizer();
+  backToPreviousScreen();
+  applyStatusBar(lastState);
+});
+
+playBtn.addEventListener("click", function () {
+  if (!audio.src) return;
+  if (audio.paused) audio.play(); else audio.pause();
+});
+
 syncBtn.addEventListener("click", function () {
   if (pollTimer) return;
-  viewMode = "log";
+  showScreen("log");
   logBox.innerHTML = "waking up the backend, this can take up to a minute on the first click...";
   statusBar.textContent = "Starting...";
 
@@ -195,7 +286,8 @@ syncBtn.addEventListener("click", function () {
 });
 
 browseBtn.addEventListener("click", function () {
-  viewMode = "browse";
+  showScreen("browse");
+  selectedIndices.clear();
   logBox.innerHTML = "C:\\DRIVE&gt; loading file list...";
   fetch(BACKEND_URL + "/api/files")
     .then(function (res) { return res.json(); })
@@ -212,9 +304,24 @@ browseBtn.addEventListener("click", function () {
 });
 
 sourceBtn.addEventListener("click", function () {
-  viewMode = "log";
-  if (lastState) renderLog(lastState);
+  showScreen("log");
+  renderLog(lastState);
 });
+
+downloadBtn.addEventListener("click", function () {
+  if (selectedIndices.size === 0) {
+    statusBar.textContent = "Select file(s) in browse first";
+    return;
+  }
+  Array.from(selectedIndices).forEach(function (idx, i) {
+    var file = currentFiles[idx];
+    setTimeout(function () {
+      if (file && file.webContentLink) window.open(file.webContentLink, "_blank");
+    }, i * 400);
+  });
+});
+
+poll();
 </script>
 </body>
 </html>
