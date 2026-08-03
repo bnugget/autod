@@ -394,7 +394,7 @@ async function getSpotifyAccessToken() {
 
 async function fetchSpotifyPlaylistUrls(accessToken) {
   const urls = [];
-  let url = `https://api.spotify.com/v1/playlists/${ENV.SPOTIFY_PLAYLIST_ID}/tracks?limit=100`;
+  let url = `https://api.spotify.com/v1/playlists/${ENV.SPOTIFY_PLAYLIST_ID}/items?limit=100`;
   while (url) {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!res.ok) {
@@ -402,10 +402,10 @@ async function fetchSpotifyPlaylistUrls(accessToken) {
       throw new Error(`spotify api failed (status ${res.status}): ${errBody}`);
     }
     const data = await res.json();
-    for (const item of data.items || []) {
-      const track = item.track;
-      if (track && track.external_urls && track.external_urls.spotify) {
-        urls.push(track.external_urls.spotify);
+    for (const entry of data.items || []) {
+      const item = entry.item;
+      if (item && item.external_urls && item.external_urls.spotify) {
+        urls.push(item.external_urls.spotify);
       }
     }
     url = data.next;
