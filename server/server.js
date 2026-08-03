@@ -1,7 +1,6 @@
 import express from "express";
 import cors from "cors";
 import { createReadStream, promises as fs } from "fs";
-import { randomUUID } from "crypto";
 import { Readable } from "stream";
 import os from "os";
 import path from "path";
@@ -10,7 +9,6 @@ import { StringSession } from "teleproto/sessions/index.js";
 import { NewMessage } from "teleproto/events/index.js";
 import { FloodWaitError } from "teleproto/errors/index.js";
 import { google } from "googleapis";
-import * as cheerio from "cheerio";
 
 const app = express();
 app.use(cors());
@@ -18,7 +16,6 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const STATE_FILE_NAME = "_autod_state.json";
-const WATCHES_FILE_NAME = "_tracklist_watches.json";
 
 function toInt(value, fallback) {
   const cleaned = String(value ?? "").trim().replace(/^"|"$/g, "");
@@ -75,6 +72,13 @@ function fileNameFor(message) {
   return `telegram_${message.id}${ext}`;
 }
 
+function bufferToStream(buffer) {
+  const stream = new Readable();
+  stream.push(buffer);
+  stream.push(null);
+  return stream;
+}
+
 function getDriveClient() {
   if (!ENV.DRIVE_FOLDER_ID || !ENV.DRIVE_REFRESH_TOKEN) return null;
   const oauth2Client = new google.auth.OAuth2(ENV.DRIVE_CLIENT_ID, ENV.DRIVE_CLIENT_SECRET);
@@ -122,13 +126,6 @@ async function loadState(drive) {
   } catch {
     return { fileId: existing.id, data: { urls: {} } };
   }
-}
-
-function bufferToStream(buffer) {
-  const stream = new Readable();
-  stream.push(buffer);
-  stream.push(null);
-  return stream;
 }
 
 async function saveState(drive, stateRef) {
@@ -348,162 +345,12 @@ app.get("/api/files", async (req, res) => {
 
   try {
     const result = await drive.files.list({
-      q: `'${ENV.DRIVE_FOLDER_ID}' in parents and trashed = false and name != '${STATE_FILE_NAME}' and name != '${WATCHES_FILE_NAME}'`,
+      q: `'${ENV.DRIVE_FOLDER_ID}' in parents and trashed = false and name != '${STATE_FILE_NAME}'`,
       fields: "files(id, name, size, modifiedTime, webContentLink)",
       orderBy: "name",
       pageSize: 200,
     });
     res.json({ files: result.data.files || [] });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-async function findWatchesFile(drive) {
-  const res = await drive.files.list({
-    q: `'${ENV.DRIVE_FOLDER_ID}' in parents and name = '${WATCHES_FILE_NAME}' and trashed = false`,
-    fields: "files(id, name)",
-    spaces: "drive",
-  });
-  return res.data.files?.[0] || null;
-}
-
-async function loadWatches(drive) {
-  const existing = await findWatchesFile(drive);
-  if (!existing) return { fileId: null, data: { watches: {} } };
-
-  const res = await drive.files.get({ fileId: existing.id, alt: "media" }, { responseType: "text" });
-  try {
-    const parsed = typeof res.data === "string" ? JSON.parse(res.data) : res.data;
-    return { fileId: existing.id, data: parsed && parsed.watches ? parsed : { watches: {} } };
-  } catch {
-    return { fileId: existing.id, data: { watches: {} } };
-  }
-}
-
-async function saveWatches(drive, store) {
-  const body = Buffer.from(JSON.stringify(store.data, null, 2));
-  if (store.fileId) {
-    await drive.files.update({ fileId: store.fileId, media: { mimeType: "application/json", body: bufferToStream(body) } });
-  } else {
-    const created = await drive.files.create({
-      requestBody: { name: WATCHES_FILE_NAME, parents: [ENV.DRIVE_FOLDER_ID] },
-      media: { mimeType: "application/json", body: bufferToStream(body) },
-      fields: "id",
-    });
-    store.fileId = created.data.id;
-  }
-}
-
-async function fetchTrackValue(url, trackNumber) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-  try {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-      },
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`failed to fetch page (status ${res.status})`);
-    const html = await res.text();
-    const $ = cheerio.load(html);
-    const trno = trackNumber - 1;
-    const el = $(`#tr_${trno}`);
-    if (!el.length) {
-      const foundCount = $('[id^="tr_"]').length;
-      const pageTitle = $("title").text().trim();
-      const bodySnippet = $("body").text().replace(/\s+/g, " ").trim().slice(0, 200);
-      throw new Error(
-        `could not find track ${trackNumber} (found ${foundCount} row(s); page title: "${pageTitle}"; body starts: "${bodySnippet}")`
-      );
-    }
-    return el.text().replace(/\s+/g, " ").trim();
-  } catch (err) {
-    if (err.name === "AbortError") throw new Error("timed out fetching that page after 15s");
-    throw err;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-app.get("/api/watches", async (req, res) => {
-  const drive = getDriveClient();
-  if (!drive) return res.status(400).json({ error: "drive not configured" });
-  try {
-    const store = await loadWatches(drive);
-    res.json({ watches: Object.values(store.data.watches) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post("/api/watches", async (req, res) => {
-  const drive = getDriveClient();
-  if (!drive) return res.status(400).json({ error: "drive not configured" });
-  const { url, trackNumber, label } = req.body || {};
-  if (!url || !trackNumber) return res.status(400).json({ error: "url and trackNumber are required" });
-
-  try {
-    const value = await fetchTrackValue(url, Number(trackNumber));
-    const store = await loadWatches(drive);
-    const id = randomUUID();
-    const watch = {
-      id,
-      url,
-      trackNumber: Number(trackNumber),
-      label: label || "",
-      baselineValue: value,
-      currentValue: value,
-      changed: false,
-      createdAt: new Date().toISOString(),
-      lastCheckedAt: new Date().toISOString(),
-      lastError: null,
-    };
-    store.data.watches[id] = watch;
-    await saveWatches(drive, store);
-    res.json({ watch });
-  } catch (err) {
-    console.error("POST /api/watches failed:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete("/api/watches/:id", async (req, res) => {
-  const drive = getDriveClient();
-  if (!drive) return res.status(400).json({ error: "drive not configured" });
-  try {
-    const store = await loadWatches(drive);
-    delete store.data.watches[req.params.id];
-    await saveWatches(drive, store);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post("/api/watches/check", async (req, res) => {
-  const drive = getDriveClient();
-  if (!drive) return res.status(400).json({ error: "drive not configured" });
-  try {
-    const store = await loadWatches(drive);
-    const watches = Object.values(store.data.watches);
-
-    for (const watch of watches) {
-      try {
-        const value = await fetchTrackValue(watch.url, watch.trackNumber);
-        watch.currentValue = value;
-        watch.lastCheckedAt = new Date().toISOString();
-        watch.lastError = null;
-        if (value !== watch.baselineValue) watch.changed = true;
-      } catch (err) {
-        watch.lastError = err.message;
-        watch.lastCheckedAt = new Date().toISOString();
-      }
-    }
-
-    await saveWatches(drive, store);
-    res.json({ checked: watches.length, watches });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
