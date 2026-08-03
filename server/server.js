@@ -410,7 +410,10 @@ async function fetchTrackValue(url, trackNumber) {
     const $ = cheerio.load(html);
     const trno = trackNumber - 1;
     const el = $(`#tr_${trno}`);
-    if (!el.length) throw new Error(`could not find track ${trackNumber} on that page`);
+    if (!el.length) {
+      const foundCount = $('[id^="tr_"]').length;
+      throw new Error(`could not find track ${trackNumber} on that page (found ${foundCount} track row(s) total on the fetched page)`);
+    }
     return el.text().replace(/\s+/g, " ").trim();
   } catch (err) {
     if (err.name === "AbortError") throw new Error("timed out fetching that page after 15s");
