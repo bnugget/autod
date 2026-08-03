@@ -412,7 +412,11 @@ async function fetchTrackValue(url, trackNumber) {
     const el = $(`#tr_${trno}`);
     if (!el.length) {
       const foundCount = $('[id^="tr_"]').length;
-      throw new Error(`could not find track ${trackNumber} on that page (found ${foundCount} track row(s) total on the fetched page)`);
+      const pageTitle = $("title").text().trim();
+      const bodySnippet = $("body").text().replace(/\s+/g, " ").trim().slice(0, 200);
+      throw new Error(
+        `could not find track ${trackNumber} (found ${foundCount} row(s); page title: "${pageTitle}"; body starts: "${bodySnippet}")`
+      );
     }
     return el.text().replace(/\s+/g, " ").trim();
   } catch (err) {
