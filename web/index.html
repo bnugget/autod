@@ -43,9 +43,9 @@ button{font-family:Tahoma,Geneva,sans-serif}
     <div class="win98-raised win98-label" style="width:40px;height:36px;text-align:center;line-height:36px;font-weight:bold;background:#d1c93a">H</div>
   </div>
   <div style="background:#c0c0c0;padding:6px 16px 18px;display:flex;justify-content:space-between;align-items:center">
-    <div style="display:flex;flex-direction:column;gap:10px;align-items:center" aria-hidden="true">
-      <div class="win98-raised win98-label" style="width:52px;height:52px;border-radius:50%;text-align:center;line-height:52px;font-weight:bold;color:#a05a00">CUE</div>
-      <div class="win98-raised win98-label" style="width:52px;height:52px;border-radius:50%;text-align:center;line-height:52px;font-weight:bold;color:#1a7a1a">PLAY</div>
+    <div style="display:flex;flex-direction:column;gap:10px;align-items:center">
+      <div class="win98-raised win98-label" style="width:52px;height:52px;border-radius:50%;text-align:center;line-height:52px;font-weight:bold;color:#a05a00" aria-hidden="true">CUE</div>
+      <button id="playBtn" class="win98-raised win98-label" style="width:52px;height:52px;border-radius:50%;font-weight:bold;color:#1a7a1a;cursor:pointer">PLAY</button>
     </div>
     <div style="position:relative;width:170px;height:170px;border-radius:50%;background:#3a3a3a;border:6px solid #1a1a1a;display:flex;align-items:center;justify-content:center;flex-shrink:0">
       <div style="position:absolute;width:144px;height:144px;border-radius:50%;border:2px solid #555;pointer-events:none"></div>
@@ -73,9 +73,13 @@ var statusBar = document.getElementById("statusBar");
 var syncBtn = document.getElementById("syncBtn");
 var browseBtn = document.getElementById("browseBtn");
 var sourceBtn = document.getElementById("sourceBtn");
+var playBtn = document.getElementById("playBtn");
 var pollTimer = null;
 var viewMode = "log";
 var lastState = null;
+var currentFiles = [];
+var nowPlaying = null;
+var audio = new Audio();
 
 function formatSize(bytes) {
   if (!bytes) return "";
@@ -90,22 +94,38 @@ function renderLog(state) {
 }
 
 function renderFiles(files) {
+  currentFiles = files;
   if (!files.length) {
     logBox.innerHTML = "C:\\DRIVE&gt; no files found in the folder yet";
     return;
   }
-  var lines = files.map(function (f) {
+  var lines = files.map(function (f, idx) {
     var size = formatSize(f.size);
     var date = f.modifiedTime ? f.modifiedTime.slice(0, 10) : "";
-    return f.name + "&nbsp;&nbsp;" + size + "&nbsp;&nbsp;" + date;
+    var play = '<a href="#" data-idx="' + idx + '" class="playLink" style="color:#ffcc00;text-decoration:none">&#9654;</a>';
+    var name = f.webContentLink
+      ? '<a href="' + f.webContentLink + '" target="_blank" style="color:#00ff00">' + f.name + "</a>"
+      : f.name;
+    return play + "&nbsp;" + name + "&nbsp;&nbsp;" + size + "&nbsp;&nbsp;" + date;
   });
   logBox.innerHTML = "C:\\DRIVE&gt; dir<br><br>" + lines.join("<br>") + "<br><br>" + files.length + " file(s)";
+
+  var links = logBox.querySelectorAll(".playLink");
+  links.forEach(function (link) {
+    link.addEventListener("click", function (e) {
+      e.preventDefault();
+      loadTrack(currentFiles[Number(link.getAttribute("data-idx"))]);
+    });
+  });
 }
 
-function renderState(state) {
-  lastState = state;
-  if (viewMode === "log") renderLog(state);
+function loadTrack(file) {
+  nowPlaying = file.name;
+  audio.src = BACKEND_URL + "/api/stream/" + file.id;
+  audio.play();
+}
 
+function applyStatusBar(state) {
   if (state.running) {
     if (state.progress) {
       statusBar.textContent = "Batch " + state.progress.batch + "/" + state.progress.totalBatches +
@@ -113,7 +133,13 @@ function renderState(state) {
     } else {
       statusBar.textContent = "Starting...";
     }
-  } else if (state.summary && state.summary.error) {
+    return;
+  }
+  if (nowPlaying) {
+    statusBar.textContent = (audio.paused ? "Paused: " : "Now playing: ") + nowPlaying;
+    return;
+  }
+  if (state.summary && state.summary.error) {
     statusBar.textContent = "Last run failed: " + state.summary.error;
   } else if (state.summary) {
     statusBar.textContent = "Last run: " + state.summary.downloaded + " of " + state.summary.sent +
@@ -121,11 +147,29 @@ function renderState(state) {
   } else {
     statusBar.textContent = "Ready";
   }
+}
+
+function renderState(state) {
+  lastState = state;
+  if (viewMode === "log") renderLog(state);
+  applyStatusBar(state);
   if (!state.running && pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
   }
 }
+
+audio.addEventListener("play", function () { if (lastState) applyStatusBar(lastState); });
+audio.addEventListener("pause", function () { if (lastState) applyStatusBar(lastState); });
+audio.addEventListener("ended", function () {
+  nowPlaying = null;
+  if (lastState) applyStatusBar(lastState);
+});
+
+playBtn.addEventListener("click", function () {
+  if (!audio.src) return;
+  if (audio.paused) audio.play(); else audio.pause();
+});
 
 function poll() {
   fetch(BACKEND_URL + "/api/status")

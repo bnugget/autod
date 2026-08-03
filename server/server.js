@@ -309,6 +309,36 @@ app.post("/api/sync", (req, res) => {
   res.json({ started: true });
 });
 
+app.get("/api/stream/:fileId", async (req, res) => {
+  const drive = getDriveClient();
+  if (!drive) return res.status(400).json({ error: "drive not configured" });
+
+  try {
+    const meta = await drive.files.get({ fileId: req.params.fileId, fields: "mimeType, size" });
+    const range = req.headers.range;
+
+    const driveRes = await drive.files.get(
+      { fileId: req.params.fileId, alt: "media" },
+      { responseType: "stream", headers: range ? { Range: range } : {} }
+    );
+
+    res.setHeader("Content-Type", meta.data.mimeType || "audio/mpeg");
+    res.setHeader("Accept-Ranges", "bytes");
+
+    if (range && driveRes.headers["content-range"]) {
+      res.status(206);
+      res.setHeader("Content-Range", driveRes.headers["content-range"]);
+      if (driveRes.headers["content-length"]) res.setHeader("Content-Length", driveRes.headers["content-length"]);
+    } else if (meta.data.size) {
+      res.setHeader("Content-Length", meta.data.size);
+    }
+
+    driveRes.data.pipe(res);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/files", async (req, res) => {
   const drive = getDriveClient();
   if (!drive) return res.status(400).json({ error: "drive not configured" });
@@ -316,7 +346,7 @@ app.get("/api/files", async (req, res) => {
   try {
     const result = await drive.files.list({
       q: `'${ENV.DRIVE_FOLDER_ID}' in parents and trashed = false and name != '${STATE_FILE_NAME}'`,
-      fields: "files(id, name, size, modifiedTime)",
+      fields: "files(id, name, size, modifiedTime, webContentLink)",
       orderBy: "name",
       pageSize: 200,
     });
