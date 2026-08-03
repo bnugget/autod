@@ -1,0 +1,13 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.tlobjects = exports.LAYER = exports.serializeDate = exports.serializeBytes = exports.Api = void 0;
+const api_1 = require("./generated/api");
+Object.defineProperty(exports, "Api", { enumerable: true, get: function () { return api_1.Api; } });
+const messages_1 = require("./runtime/patches/messages");
+(0, messages_1.patchAll)();
+var helpers_1 = require("./runtime/helpers");
+Object.defineProperty(exports, "serializeBytes", { enumerable: true, get: function () { return helpers_1.serializeBytes; } });
+Object.defineProperty(exports, "serializeDate", { enumerable: true, get: function () { return helpers_1.serializeDate; } });
+var registry_1 = require("./runtime/registry");
+Object.defineProperty(exports, "LAYER", { enumerable: true, get: function () { return registry_1.LAYER; } });
+Object.defineProperty(exports, "tlobjects", { enumerable: true, get: function () { return registry_1.tlobjects; } });

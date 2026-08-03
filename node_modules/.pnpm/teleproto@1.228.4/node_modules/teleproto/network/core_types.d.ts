@@ -1,0 +1,17 @@
+export declare const kDcShift = 10000;
+export declare const kConfigDcShift = 1;
+export declare const kLogoutDcShift = 2;
+export declare const kUpdaterDcShift = 3;
+export declare const kExportDcShift = 4;
+export declare const kExportMediaDcShift = 5;
+export declare const kMaxMediaDcCount = 16;
+export declare const kBaseDownloadDcShift = 16;
+export declare const kBaseUploadDcShift = 32;
+export type ShiftedDcId = number;
+export declare function bareDcId(shiftedDcId: ShiftedDcId): number;
+export declare function shiftDcId(dcId: number, shift: number): ShiftedDcId;
+export declare function getDcIdShift(shiftedDcId: ShiftedDcId): number;
+export declare function downloadDcId(dcId: number, index: number): ShiftedDcId;
+export declare function uploadDcId(dcId: number, index: number): ShiftedDcId;
+export declare function isDownloadDcId(shiftedDcId: ShiftedDcId): boolean;
+export declare function isUploadDcId(shiftedDcId: ShiftedDcId): boolean;

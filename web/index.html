@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>autoD</title>
+<style>
+body{margin:0;background:#008080;display:flex;justify-content:center;padding:24px;font-family:Tahoma,Geneva,sans-serif}
+.win98-raised{border-style:solid;border-width:2px;border-color:#fff #404040 #404040 #fff;background:#c0c0c0}
+.win98-inset{border-style:solid;border-width:2px;border-color:#404040 #fff #fff #404040}
+.win98-label{font-family:Tahoma,Geneva,sans-serif;font-size:11px;color:#000}
+button{font-family:Tahoma,Geneva,sans-serif}
+</style>
+</head>
+<body>
+<div class="win98-raised" style="width:460px;padding:2px">
+  <div style="background:#0a246a;color:#fff;font-size:12px;font-weight:bold;padding:4px 6px;display:flex;justify-content:space-between;align-items:center">
+    <span>SYNC.EXE - AutoD Music Pipeline</span>
+    <div style="display:flex;gap:2px" aria-hidden="true">
+      <div class="win98-raised" style="width:16px;height:14px;text-align:center;line-height:14px;font-size:11px">_</div>
+      <div class="win98-raised" style="width:16px;height:14px;text-align:center;line-height:14px;font-size:11px">&#9633;</div>
+      <div class="win98-raised" style="width:16px;height:14px;text-align:center;line-height:14px;font-size:11px">X</div>
+    </div>
+  </div>
+  <div style="background:#c0c0c0;padding:4px 6px;display:flex;gap:4px;border-bottom:1px solid #808080" aria-hidden="true">
+    <div class="win98-raised win98-label" style="padding:2px 6px">SOURCE</div>
+    <div class="win98-raised win98-label" style="padding:2px 6px">BROWSE</div>
+    <div class="win98-raised win98-label" style="padding:2px 6px">PLAYLIST</div>
+    <div class="win98-raised win98-label" style="padding:2px 6px">SEARCH</div>
+    <div class="win98-raised win98-label" style="padding:2px 6px">MENU</div>
+  </div>
+  <div style="background:#c0c0c0;padding:10px">
+    <div class="win98-inset" style="background:#000;color:#00ff00;font-family:'Courier New',monospace;font-size:11px;padding:8px;height:120px;overflow-y:auto" id="logBox">C:\AUTOD&gt; ready, click SYNC to start</div>
+    <div class="win98-inset win98-label" style="background:#c0c0c0;padding:3px 6px;margin-top:4px" id="statusBar">Ready</div>
+  </div>
+  <div style="background:#c0c0c0;padding:0 10px 8px;display:flex;gap:4px;justify-content:center" aria-hidden="true">
+    <div class="win98-raised win98-label" style="width:40px;height:36px;text-align:center;line-height:36px;font-weight:bold;background:#e0435a">A</div>
+    <div class="win98-raised win98-label" style="width:40px;height:36px;text-align:center;line-height:36px;font-weight:bold;background:#3aa0e0">B</div>
+    <div class="win98-raised win98-label" style="width:40px;height:36px;text-align:center;line-height:36px;font-weight:bold;background:#7fd13a">C</div>
+    <div class="win98-raised win98-label" style="width:40px;height:36px;text-align:center;line-height:36px;font-weight:bold;background:#c56fe0">D</div>
+    <div class="win98-raised win98-label" style="width:40px;height:36px;text-align:center;line-height:36px;font-weight:bold;background:#3ad18b">E</div>
+    <div class="win98-raised win98-label" style="width:40px;height:36px;text-align:center;line-height:36px;font-weight:bold;background:#e08a3a">F</div>
+    <div class="win98-raised win98-label" style="width:40px;height:36px;text-align:center;line-height:36px;font-weight:bold;background:#4a6fe0">G</div>
+    <div class="win98-raised win98-label" style="width:40px;height:36px;text-align:center;line-height:36px;font-weight:bold;background:#d1c93a">H</div>
+  </div>
+  <div style="background:#c0c0c0;padding:6px 16px 18px;display:flex;justify-content:space-between;align-items:center">
+    <div style="display:flex;flex-direction:column;gap:10px;align-items:center" aria-hidden="true">
+      <div class="win98-raised win98-label" style="width:52px;height:52px;border-radius:50%;text-align:center;line-height:52px;font-weight:bold;color:#a05a00">CUE</div>
+      <div class="win98-raised win98-label" style="width:52px;height:52px;border-radius:50%;text-align:center;line-height:52px;font-weight:bold;color:#1a7a1a">PLAY</div>
+    </div>
+    <div style="position:relative;width:170px;height:170px;border-radius:50%;background:#3a3a3a;border:6px solid #1a1a1a;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+      <div style="position:absolute;width:144px;height:144px;border-radius:50%;border:2px solid #555"></div>
+      <div style="position:absolute;width:118px;height:118px;border-radius:50%;border:2px solid #555"></div>
+      <button id="syncBtn" class="win98-raised" style="width:80px;height:80px;border-radius:50%;font-weight:bold;font-size:15px;color:#000;letter-spacing:1px;cursor:pointer">SYNC</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;align-items:center" aria-hidden="true">
+      <div style="display:flex;gap:4px">
+        <div class="win98-raised win98-label" style="width:34px;height:28px;text-align:center;line-height:28px;font-size:10px">IN</div>
+        <div class="win98-raised win98-label" style="width:34px;height:28px;text-align:center;line-height:28px;font-size:10px">OUT</div>
+      </div>
+      <div class="win98-raised win98-label" style="width:72px;height:24px;text-align:center;line-height:24px;font-size:10px">RELOOP</div>
+      <div style="display:flex;gap:4px">
+        <div class="win98-raised win98-label" style="width:34px;height:28px;text-align:center;line-height:28px;font-size:10px">4</div>
+        <div class="win98-raised win98-label" style="width:34px;height:28px;text-align:center;line-height:28px;font-size:10px">8</div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+var BACKEND_URL = "PASTE_YOUR_RENDER_URL_HERE";
+
+var logBox = document.getElementById("logBox");
+var statusBar = document.getElementById("statusBar");
+var syncBtn = document.getElementById("syncBtn");
+var pollTimer = null;
+
+function renderState(state) {
+  if (state.log && state.log.length) {
+    logBox.innerHTML = state.log.map(function (entry) { return entry.text; }).join("<br>");
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+  if (state.running) {
+    statusBar.textContent = "Running...";
+  } else if (state.summary && state.summary.error) {
+    statusBar.textContent = "Last run failed: " + state.summary.error;
+  } else if (state.summary) {
+    statusBar.textContent = "Last run: " + state.summary.downloaded + " of " + state.summary.sent +
+      " downloaded, " + state.summary.uploaded + " of " + state.summary.sent + " uploaded";
+  } else {
+    statusBar.textContent = "Ready";
+  }
+  if (!state.running && pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function poll() {
+  fetch(BACKEND_URL + "/api/status")
+    .then(function (res) { return res.json(); })
+    .then(renderState)
+    .catch(function () {});
+}
+
+syncBtn.addEventListener("click", function () {
+  if (pollTimer) return;
+  logBox.innerHTML = "waking up the backend, this can take up to a minute on the first click...";
+  statusBar.textContent = "Starting...";
+
+  fetch(BACKEND_URL + "/api/sync", { method: "POST" })
+    .then(function () {
+      pollTimer = setInterval(poll, 2000);
+      poll();
+    })
+    .catch(function () {
+      statusBar.textContent = "Could not reach the backend";
+    });
+});
+</script>
+</body>
+</html>
