@@ -21,12 +21,12 @@ button{font-family:Tahoma,Geneva,sans-serif}
       <div class="win98-raised" style="width:16px;height:14px;text-align:center;line-height:14px;font-size:11px">X</div>
     </div>
   </div>
-  <div style="background:#c0c0c0;padding:4px 6px;display:flex;gap:4px;border-bottom:1px solid #808080" aria-hidden="true">
-    <div class="win98-raised win98-label" style="padding:2px 6px">SOURCE</div>
-    <div class="win98-raised win98-label" style="padding:2px 6px">BROWSE</div>
-    <div class="win98-raised win98-label" style="padding:2px 6px">PLAYLIST</div>
-    <div class="win98-raised win98-label" style="padding:2px 6px">SEARCH</div>
-    <div class="win98-raised win98-label" style="padding:2px 6px">MENU</div>
+  <div style="background:#c0c0c0;padding:4px 6px;display:flex;gap:4px;border-bottom:1px solid #808080">
+    <button id="sourceBtn" class="win98-raised win98-label" style="padding:2px 6px;cursor:pointer">SOURCE</button>
+    <button id="browseBtn" class="win98-raised win98-label" style="padding:2px 6px;cursor:pointer">BROWSE</button>
+    <div class="win98-raised win98-label" style="padding:2px 6px" aria-hidden="true">PLAYLIST</div>
+    <div class="win98-raised win98-label" style="padding:2px 6px" aria-hidden="true">SEARCH</div>
+    <div class="win98-raised win98-label" style="padding:2px 6px" aria-hidden="true">MENU</div>
   </div>
   <div style="background:#c0c0c0;padding:10px">
     <div class="win98-inset" style="background:#000;color:#00ff00;font-family:'Courier New',monospace;font-size:11px;padding:8px;height:120px;overflow-y:auto" id="logBox">C:\AUTOD&gt; ready, click SYNC to start</div>
@@ -71,15 +71,48 @@ var BACKEND_URL = "https://autod-d25s.onrender.com";
 var logBox = document.getElementById("logBox");
 var statusBar = document.getElementById("statusBar");
 var syncBtn = document.getElementById("syncBtn");
+var browseBtn = document.getElementById("browseBtn");
+var sourceBtn = document.getElementById("sourceBtn");
 var pollTimer = null;
+var viewMode = "log";
+var lastState = null;
 
-function renderState(state) {
+function formatSize(bytes) {
+  if (!bytes) return "";
+  return (Number(bytes) / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function renderLog(state) {
   if (state.log && state.log.length) {
     logBox.innerHTML = state.log.map(function (entry) { return entry.text; }).join("<br>");
     logBox.scrollTop = logBox.scrollHeight;
   }
+}
+
+function renderFiles(files) {
+  if (!files.length) {
+    logBox.innerHTML = "C:\\DRIVE&gt; no files found in the folder yet";
+    return;
+  }
+  var lines = files.map(function (f) {
+    var size = formatSize(f.size);
+    var date = f.modifiedTime ? f.modifiedTime.slice(0, 10) : "";
+    return f.name + "&nbsp;&nbsp;" + size + "&nbsp;&nbsp;" + date;
+  });
+  logBox.innerHTML = "C:\\DRIVE&gt; dir<br><br>" + lines.join("<br>") + "<br><br>" + files.length + " file(s)";
+}
+
+function renderState(state) {
+  lastState = state;
+  if (viewMode === "log") renderLog(state);
+
   if (state.running) {
-    statusBar.textContent = "Running...";
+    if (state.progress) {
+      statusBar.textContent = "Batch " + state.progress.batch + "/" + state.progress.totalBatches +
+        " - " + state.progress.processed + "/" + state.progress.batchSize + " processed";
+    } else {
+      statusBar.textContent = "Starting...";
+    }
   } else if (state.summary && state.summary.error) {
     statusBar.textContent = "Last run failed: " + state.summary.error;
   } else if (state.summary) {
@@ -103,6 +136,7 @@ function poll() {
 
 syncBtn.addEventListener("click", function () {
   if (pollTimer) return;
+  viewMode = "log";
   logBox.innerHTML = "waking up the backend, this can take up to a minute on the first click...";
   statusBar.textContent = "Starting...";
 
@@ -114,6 +148,28 @@ syncBtn.addEventListener("click", function () {
     .catch(function () {
       statusBar.textContent = "Could not reach the backend";
     });
+});
+
+browseBtn.addEventListener("click", function () {
+  viewMode = "browse";
+  logBox.innerHTML = "C:\\DRIVE&gt; loading file list...";
+  fetch(BACKEND_URL + "/api/files")
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+      if (data.error) {
+        logBox.innerHTML = "C:\\DRIVE&gt; error: " + data.error;
+        return;
+      }
+      renderFiles(data.files);
+    })
+    .catch(function () {
+      logBox.innerHTML = "C:\\DRIVE&gt; could not reach the backend";
+    });
+});
+
+sourceBtn.addEventListener("click", function () {
+  viewMode = "log";
+  if (lastState) renderLog(lastState);
 });
 </script>
 </body>

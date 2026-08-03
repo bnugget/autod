@@ -42,6 +42,7 @@ const state = {
   log: [],
   summary: null,
   lastRunAt: null,
+  progress: null,
 };
 
 function pushLog(text) {
@@ -164,6 +165,7 @@ async function runSync() {
   state.running = true;
   state.log = [];
   state.summary = null;
+  state.progress = null;
   pushLog("starting sync...");
 
   let tmpDir = null;
@@ -253,6 +255,7 @@ async function runSync() {
       counts.sent += batch.length;
 
       pushLog(`sending batch ${i + 1}/${batches.length} (${batch.length} link(s))`);
+      state.progress = { batch: i + 1, totalBatches: batches.length, batchSize: batch.length, processed: 0 };
       const sendResult = await sendBatchWithFloodRetry(client, target, batch);
 
       if (!sendResult.ok) {
@@ -269,6 +272,7 @@ async function runSync() {
       const start = Date.now();
       while (processed.count < batch.length && Date.now() - start < 2 * 60 * 1000) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
+        state.progress.processed = processed.count;
       }
       pushLog(`batch ${i + 1} result: ${processed.count}/${batch.length} file(s) fully processed`);
 
@@ -292,6 +296,7 @@ async function runSync() {
     if (client) await client.disconnect().catch(() => {});
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     state.running = false;
+    state.progress = null;
     state.lastRunAt = new Date().toISOString();
   }
 }
@@ -302,6 +307,23 @@ app.post("/api/sync", (req, res) => {
   }
   runSync();
   res.json({ started: true });
+});
+
+app.get("/api/files", async (req, res) => {
+  const drive = getDriveClient();
+  if (!drive) return res.status(400).json({ error: "drive not configured" });
+
+  try {
+    const result = await drive.files.list({
+      q: `'${ENV.DRIVE_FOLDER_ID}' in parents and trashed = false and name != '${STATE_FILE_NAME}'`,
+      fields: "files(id, name, size, modifiedTime)",
+      orderBy: "name",
+      pageSize: 200,
+    });
+    res.json({ files: result.data.files || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get("/api/status", (req, res) => {
