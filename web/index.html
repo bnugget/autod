@@ -149,15 +149,25 @@ function renderFiles(files) {
     logBox.innerHTML = "C:\\DRIVE&gt; no files found in the folder yet";
     return;
   }
-  var lines = files.map(function (f, idx) {
-    var size = formatSize(f.size);
+  var rows = files.map(function (f, idx) {
     var date = f.modifiedTime ? f.modifiedTime.slice(0, 10) : "";
     var check = '<input type="checkbox" class="fileCheck" data-idx="' + idx + '"' +
-      (selectedIndices.has(idx) ? " checked" : "") + ' style="accent-color:#00ff00;margin-right:4px">';
+      (selectedIndices.has(idx) ? " checked" : "") + ' style="accent-color:#00ff00">';
     var name = '<a href="#" data-idx="' + idx + '" class="playLink" style="color:#00ff00;text-decoration:underline;cursor:pointer">' + f.name + "</a>";
-    return check + name + "&nbsp;&nbsp;" + size + "&nbsp;&nbsp;" + date;
+    return "<tr>" +
+      '<td style="padding:3px 6px 3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + name + "</td>" +
+      '<td style="padding:3px 6px;white-space:nowrap">' + date + "</td>" +
+      '<td style="padding:3px 0;text-align:center">' + check + "</td>" +
+      "</tr>";
   });
-  logBox.innerHTML = "C:\\DRIVE&gt; dir<br><br>" + lines.join("<br>") + "<br><br>" + files.length + " file(s)";
+  logBox.innerHTML =
+    "C:\\DRIVE&gt; dir (" + files.length + " file(s))<br><br>" +
+    '<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-family:\'Courier New\',monospace;font-size:11px">' +
+    '<colgroup><col><col style="width:78px"><col style="width:26px"></colgroup>' +
+    '<tr><th style="text-align:left;border-bottom:1px solid #0a0;padding:2px 6px 4px 0">Name</th>' +
+    '<th style="text-align:left;border-bottom:1px solid #0a0;padding:2px 6px 4px">Date</th>' +
+    '<th style="border-bottom:1px solid #0a0;padding:2px 0 4px">&nbsp;</th></tr>' +
+    rows.join("") + "</table>";
 
   logBox.querySelectorAll(".playLink").forEach(function (link) {
     link.addEventListener("click", function (e) {
