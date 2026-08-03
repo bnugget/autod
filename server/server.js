@@ -14,12 +14,18 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
+function toInt(value, fallback) {
+  const cleaned = String(value ?? "").trim().replace(/^"|"$/g, "");
+  const n = Number(cleaned);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 const ENV = {
-  TELEGRAM_API_ID: Number(process.env.TELEGRAM_API_ID),
+  TELEGRAM_API_ID: toInt(process.env.TELEGRAM_API_ID, 0),
   TELEGRAM_API_HASH: process.env.TELEGRAM_API_HASH,
   TELEGRAM_SESSION: process.env.TELEGRAM_SESSION,
   TELEGRAM_TARGET_USERNAME: process.env.TELEGRAM_TARGET_USERNAME,
-  BATCH_SIZE: Number(process.env.BATCH_SIZE || 10),
+  BATCH_SIZE: toInt(process.env.BATCH_SIZE, 10),
   GOOGLE_SHEET_ID: process.env.GOOGLE_SHEET_ID,
   GOOGLE_SHEET_GID: process.env.GOOGLE_SHEET_GID || "0",
   DRIVE_FOLDER_ID: process.env.DRIVE_FOLDER_ID,
