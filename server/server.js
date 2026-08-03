@@ -397,7 +397,10 @@ async function fetchSpotifyPlaylistUrls(accessToken) {
   let url = `https://api.spotify.com/v1/playlists/${ENV.SPOTIFY_PLAYLIST_ID}/tracks?limit=100`;
   while (url) {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-    if (!res.ok) throw new Error(`spotify api failed (status ${res.status})`);
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`spotify api failed (status ${res.status}): ${errBody}`);
+    }
     const data = await res.json();
     for (const item of data.items || []) {
       const track = item.track;
