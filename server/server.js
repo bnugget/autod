@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { createReadStream, promises as fs } from "fs";
+import { Readable } from "stream";
 import os from "os";
 import path from "path";
 import { TelegramClient } from "teleproto";
@@ -119,14 +120,21 @@ async function loadState(drive) {
   }
 }
 
+function bufferToStream(buffer) {
+  const stream = new Readable();
+  stream.push(buffer);
+  stream.push(null);
+  return stream;
+}
+
 async function saveState(drive, stateRef) {
   const body = Buffer.from(JSON.stringify(stateRef.data, null, 2));
   if (stateRef.fileId) {
-    await drive.files.update({ fileId: stateRef.fileId, media: { mimeType: "application/json", body } });
+    await drive.files.update({ fileId: stateRef.fileId, media: { mimeType: "application/json", body: bufferToStream(body) } });
   } else {
     const created = await drive.files.create({
       requestBody: { name: STATE_FILE_NAME, parents: [ENV.DRIVE_FOLDER_ID] },
-      media: { mimeType: "application/json", body },
+      media: { mimeType: "application/json", body: bufferToStream(body) },
       fields: "id",
     });
     stateRef.fileId = created.data.id;
