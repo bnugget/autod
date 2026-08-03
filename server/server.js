@@ -6,6 +6,7 @@ import path from "path";
 import { TelegramClient } from "teleproto";
 import { StringSession } from "teleproto/sessions/index.js";
 import { NewMessage } from "teleproto/events/index.js";
+import { FloodWaitError } from "teleproto/errors/index.js";
 import { google } from "googleapis";
 
 const app = express();
@@ -13,6 +14,7 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const STATE_FILE_NAME = "_autod_state.json";
 
 function toInt(value, fallback) {
   const cleaned = String(value ?? "").trim().replace(/^"|"$/g, "");
@@ -75,13 +77,79 @@ function getDriveClient() {
   return google.drive({ version: "v3", auth: oauth2Client });
 }
 
-async function uploadToDrive(drive, localPath, fileName) {
-  const res = await drive.files.create({
-    requestBody: { name: fileName, parents: [ENV.DRIVE_FOLDER_ID] },
-    media: { body: createReadStream(localPath) },
-    fields: "id, name",
+async function uploadToDrive(drive, localPath, fileName, attempts = 2) {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const res = await drive.files.create({
+        requestBody: { name: fileName, parents: [ENV.DRIVE_FOLDER_ID] },
+        media: { body: createReadStream(localPath) },
+        fields: "id, name",
+      });
+      return res.data;
+    } catch (err) {
+      if (attempt === attempts) {
+        pushLog(`drive upload failed after ${attempts} attempt(s): ${fileName} (${err.message})`);
+        return null;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+  return null;
+}
+
+async function findStateFile(drive) {
+  const res = await drive.files.list({
+    q: `'${ENV.DRIVE_FOLDER_ID}' in parents and name = '${STATE_FILE_NAME}' and trashed = false`,
+    fields: "files(id, name)",
+    spaces: "drive",
   });
-  return res.data;
+  return res.data.files?.[0] || null;
+}
+
+async function loadState(drive) {
+  const existing = await findStateFile(drive);
+  if (!existing) return { fileId: null, data: { urls: {} } };
+
+  const res = await drive.files.get({ fileId: existing.id, alt: "media" }, { responseType: "text" });
+  try {
+    const parsed = typeof res.data === "string" ? JSON.parse(res.data) : res.data;
+    return { fileId: existing.id, data: parsed && parsed.urls ? parsed : { urls: {} } };
+  } catch {
+    return { fileId: existing.id, data: { urls: {} } };
+  }
+}
+
+async function saveState(drive, stateRef) {
+  const body = Buffer.from(JSON.stringify(stateRef.data, null, 2));
+  if (stateRef.fileId) {
+    await drive.files.update({ fileId: stateRef.fileId, media: { mimeType: "application/json", body } });
+  } else {
+    const created = await drive.files.create({
+      requestBody: { name: STATE_FILE_NAME, parents: [ENV.DRIVE_FOLDER_ID] },
+      media: { mimeType: "application/json", body },
+      fields: "id",
+    });
+    stateRef.fileId = created.data.id;
+  }
+}
+
+async function sendBatchWithFloodRetry(client, target, batch) {
+  const text = batch.join("\n");
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await client.sendMessage(target, { message: text });
+      return { ok: true };
+    } catch (err) {
+      if (err instanceof FloodWaitError) {
+        const seconds = err.seconds || 30;
+        pushLog(`rate limited by telegram, waiting ${seconds}s before retrying this batch`);
+        await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+        continue;
+      }
+      return { ok: false, error: err.message };
+    }
+  }
+  return { ok: false, error: "still rate limited after waiting" };
 }
 
 async function runSync() {
@@ -99,13 +167,34 @@ async function runSync() {
 
     if (urls.length === 0) {
       pushLog("nothing to send");
-      state.summary = { sent: 0, downloaded: 0, uploaded: 0 };
+      state.summary = { sent: 0, downloaded: 0, uploaded: 0, skipped: 0 };
+      return;
+    }
+
+    const drive = getDriveClient();
+    if (!drive) pushLog("drive not configured, files will not be uploaded and dedup tracking is disabled");
+
+    let stateRef = { fileId: null, data: { urls: {} } };
+    if (drive) {
+      try {
+        stateRef = await loadState(drive);
+        pushLog(`loaded status for ${Object.keys(stateRef.data.urls).length} previously seen url(s)`);
+      } catch (err) {
+        pushLog(`could not load status file, continuing without dedup this run (${err.message})`);
+      }
+    }
+
+    const pending = drive ? urls.filter((u) => stateRef.data.urls[u]?.status !== "done") : urls;
+    const skipped = urls.length - pending.length;
+    if (skipped > 0) pushLog(`skipping ${skipped} url(s) already completed in a previous run`);
+
+    if (pending.length === 0) {
+      pushLog("nothing new to send");
+      state.summary = { sent: 0, downloaded: 0, uploaded: 0, skipped };
       return;
     }
 
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "autod-"));
-    const drive = getDriveClient();
-    if (!drive) pushLog("drive not configured, files will not be uploaded");
 
     client = new TelegramClient(
       new StringSession(ENV.TELEGRAM_SESSION),
@@ -115,8 +204,8 @@ async function runSync() {
     );
     await client.connect();
 
-    const counts = { sent: 0, downloaded: 0, uploaded: 0 };
-    const received = { count: 0 };
+    const counts = { sent: 0, downloaded: 0, uploaded: 0, skipped };
+    const processed = { count: 0 };
 
     client.addEventHandler(async (event) => {
       const message = event.message;
@@ -129,45 +218,65 @@ async function runSync() {
         await client.downloadMedia(message.media, { outputFile: tmpPath });
         pushLog(`downloaded: ${fileName}`);
         counts.downloaded += 1;
-        received.count += 1;
       } catch (err) {
         pushLog(`download failed: ${fileName} (${err.message})`);
+        processed.count += 1;
         return;
       }
 
       if (drive) {
-        try {
-          const uploaded = await uploadToDrive(drive, tmpPath, fileName);
+        const uploaded = await uploadToDrive(drive, tmpPath, fileName);
+        if (uploaded) {
           pushLog(`uploaded to drive: ${uploaded.name}`);
           counts.uploaded += 1;
-        } catch (err) {
-          pushLog(`drive upload failed: ${fileName} (${err.message})`);
         }
       }
 
       await fs.unlink(tmpPath).catch(() => {});
+      processed.count += 1;
     }, new NewMessage({ chats: [ENV.TELEGRAM_TARGET_USERNAME] }));
 
     const target = await client.getEntity(ENV.TELEGRAM_TARGET_USERNAME);
-    const batches = chunk(urls, ENV.BATCH_SIZE);
+    const batches = chunk(pending, ENV.BATCH_SIZE);
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
-      received.count = 0;
+      processed.count = 0;
       counts.sent += batch.length;
 
       pushLog(`sending batch ${i + 1}/${batches.length} (${batch.length} link(s))`);
-      await client.sendMessage(target, { message: batch.join("\n") });
+      const sendResult = await sendBatchWithFloodRetry(client, target, batch);
+
+      if (!sendResult.ok) {
+        pushLog(`batch ${i + 1} failed to send: ${sendResult.error}, will retry next run`);
+        if (drive) {
+          for (const url of batch) {
+            stateRef.data.urls[url] = { status: "failed", lastError: sendResult.error, at: new Date().toISOString() };
+          }
+          await saveState(drive, stateRef).catch((err) => pushLog(`could not save status file: ${err.message}`));
+        }
+        continue;
+      }
 
       const start = Date.now();
-      while (received.count < batch.length && Date.now() - start < 2 * 60 * 1000) {
+      while (processed.count < batch.length && Date.now() - start < 2 * 60 * 1000) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
-      pushLog(`batch ${i + 1} result: ${received.count}/${batch.length} file(s) received`);
+      pushLog(`batch ${i + 1} result: ${processed.count}/${batch.length} file(s) fully processed`);
+
+      if (drive) {
+        const batchStatus = processed.count >= batch.length ? "done" : "partial";
+        for (const url of batch) {
+          stateRef.data.urls[url] = { status: batchStatus, at: new Date().toISOString() };
+        }
+        await saveState(drive, stateRef).catch((err) => pushLog(`could not save status file: ${err.message}`));
+      }
     }
 
     state.summary = counts;
-    pushLog(`done, ${counts.downloaded} of ${counts.sent} downloaded, ${counts.uploaded} of ${counts.sent} uploaded`);
+    pushLog(
+      `done, ${counts.downloaded} of ${counts.sent} downloaded, ${counts.uploaded} of ${counts.sent} uploaded, ${counts.skipped} already up to date`
+    );
   } catch (err) {
     pushLog(`sync failed: ${err.message}`);
     state.summary = { error: err.message };
